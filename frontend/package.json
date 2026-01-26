@@ -13,7 +13,8 @@
   "dependencies": {
     "next": "16.1.1",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "wavesurfer.js": "^7.12.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.51.1",

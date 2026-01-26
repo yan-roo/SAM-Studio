@@ -92,9 +92,7 @@ export default function Home() {
     cacheBust: string;
   } | null>(null);
 
-  const normalizeLabel = (value: string) =>
-    value.trim().toLowerCase().replace(/\s+/g, " ");
-  const normalizePromptForModel = (value: string) =>
+  const normalizeText = (value: string) =>
     value.trim().toLowerCase().replace(/\s+/g, " ");
   const appendCacheBust = (url: string, token: string) => {
     const separator = url.includes("?") ? "&" : "?";
@@ -336,9 +334,9 @@ export default function Home() {
     if (!trimmed) {
       return;
     }
-    const normalized = normalizeLabel(trimmed);
+    const normalized = normalizeText(trimmed);
     const existing = candidates.find(
-      (candidate) => normalizeLabel(candidate.label) === normalized,
+      (candidate) => normalizeText(candidate.label) === normalized,
     );
     if (existing) {
       setMixItems((prev) => {
@@ -354,7 +352,7 @@ export default function Home() {
       source: "prompt",
     };
     setCustomCandidates((prev) => {
-      if (prev.some((candidate) => normalizeLabel(candidate.label) === normalized)) {
+      if (prev.some((candidate) => normalizeText(candidate.label) === normalized)) {
         return prev;
       }
       return [...prev, promptCandidate];
@@ -506,21 +504,6 @@ export default function Home() {
   const handlePreviewSegment = (label: string, segment: CandidateSegment) => {
     const duration = Math.max(segment.t1 - segment.t0, 0.5);
     applyPreviewWindow(segment.t0, duration, label);
-    if (mixStatus === "rendering") {
-      showToast("Mix in progress. Wait for it to finish before previewing a segment.");
-      return;
-    }
-    if (!job) {
-      return;
-    }
-    const hasSelection = candidates.some(
-      (candidate) => mixItems[candidate.label]?.selected,
-    );
-    if (!hasSelection) {
-      showToast("Select at least one candidate to render a preview.");
-      return;
-    }
-    void handleRenderMix(true);
   };
 
   const pollMixStatus = async (jobId: string, requestId: number) => {
@@ -587,7 +570,7 @@ export default function Home() {
       setMixError("Select at least one candidate.");
       return;
     }
-    const prompts = selected.map((item) => normalizePromptForModel(item.label));
+    const prompts = selected.map((item) => normalizeText(item.label));
     const gains = selected.map((item) => mixItems[item.label]?.gain ?? 1.0);
     setMixStatus("rendering");
     setMixError(null);
@@ -750,6 +733,20 @@ export default function Home() {
       gain: mixItems[candidate.label]?.gain ?? 1.0,
     }));
   const canRender = Boolean(job && mixList.length > 0);
+  const selectedCandidates = candidates.filter(
+    (candidate) => mixItems[candidate.label]?.selected,
+  );
+  const segmentCandidates = selectedCandidates.length
+    ? selectedCandidates
+    : candidates.slice(0, 3);
+  const waveformSegments = segmentCandidates
+    .flatMap((candidate) =>
+      (candidate.segments ?? []).map((segment) => ({
+        ...segment,
+        label: candidate.label,
+      })),
+    )
+    .slice(0, 40);
 
   return (
     <div className="page">
@@ -972,10 +969,16 @@ export default function Home() {
         />
         <JobStatus title={statusTitle} tag={statusTag} stats={stats} note={note} error={error} />
         <WaveformPanel
+          audioUrl={fullInputUrl}
+          durationSeconds={job?.duration_seconds ?? null}
+          segments={waveformSegments}
+          previewStartSeconds={previewStartSeconds}
+          previewSeconds={previewSeconds}
+          onSelectSegment={handlePreviewSegment}
           message={
             job
-              ? "Waveform preview will appear here once audio rendering is wired."
-              : "Upload audio to populate the waveform and regions."
+              ? "Click a segment to set the preview window, then use Render preview."
+              : "Upload audio to render the waveform and candidate segments."
           }
         />
         <CandidatesPanel

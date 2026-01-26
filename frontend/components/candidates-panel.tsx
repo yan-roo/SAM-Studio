@@ -179,8 +179,8 @@ export function CandidatesPanel({
         </button>
       </div>
       <p className="panel-meta">
-        Click a segment to set the preview window and render it. Free-text prompts are
-        supported even if not in the AudioSet label map.
+        Click a segment to set the preview window, then use Render preview. Free-text
+        prompts are supported even if not in the AudioSet label map.
       </p>
     </section>
   );

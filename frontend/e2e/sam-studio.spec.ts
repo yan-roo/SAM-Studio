@@ -244,6 +244,162 @@ test("upload, preview, cancel, restart, and render mix", async ({ page }) => {
   await expect(page.getByTestId("ab-status")).toHaveText("Preview ready");
   await expect(page.getByTestId("audio-processed")).toHaveAttribute("src", /\/api\/assets\//);
 
+  await expect(page.getByTestId("waveform-panel")).toBeVisible();
+  await expect(page.getByTestId("waveform-canvas")).toHaveAttribute("data-ready", "true");
+  await expect(page.getByTestId("waveform-ruler")).toBeVisible();
+  await expect(page.getByTestId("waveform-playhead-label")).toBeVisible();
+  const tickCount = await page.locator(".waveform-ruler-tick").count();
+  expect(tickCount).toBeGreaterThan(0);
+  const previewRange = page.getByTestId("preview-range");
+  await expect(previewRange).toBeVisible();
+  const previewLeft = await previewRange.evaluate((el) =>
+    Number.parseFloat((el as HTMLElement).style.left),
+  );
+  const previewWidth = await previewRange.evaluate((el) =>
+    Number.parseFloat((el as HTMLElement).style.width),
+  );
+  const durationFromLeft = 2 / (previewLeft / 100);
+  const durationFromWidth = 5 / (previewWidth / 100);
+  const durationEstimate = (durationFromLeft + durationFromWidth) / 2;
+  expect(durationEstimate).toBeGreaterThan(0);
+  const waveformSegment = page.locator("[data-testid^='waveform-segment-']").first();
+  await expect(waveformSegment).toBeVisible();
+  await expect(page.getByTestId("waveform-scroll-indicator")).toHaveAttribute(
+    "data-visible",
+    "true",
+  );
+  const thumbWidth = await page
+    .getByTestId("waveform-scroll-thumb")
+    .evaluate((el) => (el as HTMLElement).style.width);
+  expect(thumbWidth).not.toBe("100%");
+
+  const segmentStartValue = await waveformSegment.getAttribute("data-segment-start");
+  const segmentEndValue = await waveformSegment.getAttribute("data-segment-end");
+  expect(segmentStartValue).not.toBeNull();
+  await waveformSegment.click();
+  const previewStartValue = Number(await page.getByTestId("preview-start").inputValue());
+  expect(previewStartValue).toBeCloseTo(Number(segmentStartValue ?? 0), 1);
+  const previewLeftAfter = await previewRange.evaluate((el) =>
+    Number.parseFloat((el as HTMLElement).style.left),
+  );
+  const previewWidthAfter = await previewRange.evaluate((el) =>
+    Number.parseFloat((el as HTMLElement).style.width),
+  );
+  const segmentStart = Number(segmentStartValue ?? 0);
+  const segmentEnd = Number(segmentEndValue ?? segmentStart);
+  const segmentDuration = Math.max(0.5, segmentEnd - segmentStart);
+  expect(previewLeftAfter).toBeCloseTo((segmentStart / durationEstimate) * 100, 0);
+  expect(previewWidthAfter).toBeCloseTo((segmentDuration / durationEstimate) * 100, 0);
+  const previewMetaText = await previewRange.locator(".waveform-preview-meta").innerText();
+  const previewMatch = previewMetaText.match(/([\d.]+)s[–-]([\d.]+)s/);
+  const previewDurationFromRange = previewMatch
+    ? Number.parseFloat((Number(previewMatch[2]) - Number(previewMatch[1])).toFixed(1))
+    : Number.parseFloat(segmentDuration.toFixed(1));
+  const presetDurations = new Set([5, 10, 20, 30]);
+  const expectedSelect = presetDurations.has(previewDurationFromRange)
+    ? String(previewDurationFromRange)
+    : "-1";
+  await expect(page.getByTestId("preview-length")).toHaveValue(expectedSelect);
+  await expect(page.getByTestId("ab-status")).toHaveText("Preview ready");
+
+  const previewTrackBox = await page.locator(".waveform-preview-track").boundingBox();
+  const segmentBox = await waveformSegment.boundingBox();
+  if (!previewTrackBox || !segmentBox) {
+    throw new Error("Missing preview track or segment bounds");
+  }
+
+  const speechSegment = page.locator("[data-testid^='waveform-segment-speech']").first();
+  const speechEndValue = Number(await speechSegment.getAttribute("data-segment-end"));
+  const previewTrackInnerWidth = await page
+    .locator(".waveform-preview-track-inner")
+    .evaluate((el) => (el as HTMLElement).getBoundingClientRect().width);
+  const previewTrackTranslateX = await page
+    .locator(".waveform-preview-track-inner")
+    .evaluate((el) => {
+      const transform = window.getComputedStyle(el).transform;
+      if (!transform || transform === "none") {
+        return 0;
+      }
+      const match = transform.match(/matrix\\(([^)]+)\\)/);
+      if (!match) {
+        return 0;
+      }
+      const parts = match[1].split(",").map((item) => Number.parseFloat(item.trim()));
+      return parts.length >= 6 ? parts[4] : 0;
+    });
+  const snapTarget = Number.isFinite(speechEndValue) ? speechEndValue : 10;
+  const targetPercent = snapTarget / durationEstimate;
+  const scrollOffset = -previewTrackTranslateX;
+  const targetX =
+    previewTrackBox.x + previewTrackInnerWidth * targetPercent - scrollOffset;
+  await page.mouse.move(
+    segmentBox.x + segmentBox.width - 2,
+    segmentBox.y + segmentBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(targetX, segmentBox.y + segmentBox.height / 2);
+  await page.mouse.up();
+  const updatedEndValue = Number(await waveformSegment.getAttribute("data-segment-end"));
+  expect(updatedEndValue).toBeGreaterThan(segmentEnd);
+  expect(updatedEndValue).toBeCloseTo(snapTarget, 1);
+
+  const zoomLabel = page.getByTestId("waveform-zoom-value");
+  const zoomBefore = await zoomLabel.textContent();
+  await page.dispatchEvent("[data-testid='waveform-canvas']", "wheel", {
+    deltaY: -180,
+    ctrlKey: true,
+  });
+  await expect(zoomLabel).not.toHaveText(zoomBefore ?? "");
+
+  await page.getByTestId("waveform-mode-pan").click();
+  await expect(page.getByTestId("waveform-canvas")).toHaveAttribute("data-mode", "pan");
+
+  const canvas = page.getByTestId("waveform-canvas");
+  const canvasBox = await page.getByTestId("waveform-canvas").boundingBox();
+  if (!canvasBox) {
+    throw new Error("Missing waveform canvas bounds");
+  }
+  await page.mouse.move(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox.x + canvasBox.width / 2 - 140, canvasBox.y + canvasBox.height / 2);
+  await page.mouse.up();
+
+  await page.getByTestId("waveform-mode-seek").click();
+  const startBeforeDrag = Number(await page.getByTestId("preview-start").inputValue());
+  const handleStart = page.locator(".waveform-preview-handle.start");
+  const handleBox = await handleStart.boundingBox();
+  if (!handleBox) {
+    throw new Error("Missing preview handle bounds");
+  }
+  const handleCenterX = handleBox.x + handleBox.width / 2;
+  const handleCenterY = handleBox.y + handleBox.height / 2;
+  await handleStart.dispatchEvent("pointerdown", {
+    clientX: handleCenterX,
+    clientY: handleCenterY,
+    pointerId: 1,
+    pointerType: "mouse",
+    buttons: 1,
+  });
+  await expect(page.getByTestId("preview-guides")).toBeVisible();
+  await expect(page.getByTestId("preview-guide-start")).toBeVisible();
+  await expect(page.getByTestId("preview-guide-end")).toBeVisible();
+  await handleStart.dispatchEvent("pointermove", {
+    clientX: handleCenterX + 20,
+    clientY: handleCenterY,
+    pointerId: 1,
+    pointerType: "mouse",
+    buttons: 1,
+  });
+  await handleStart.dispatchEvent("pointerup", {
+    clientX: handleCenterX + 20,
+    clientY: handleCenterY,
+    pointerId: 1,
+    pointerType: "mouse",
+    buttons: 1,
+  });
+  const startAfterDrag = Number(await page.getByTestId("preview-start").inputValue());
+  expect(startAfterDrag).toBeGreaterThan(startBeforeDrag);
+
   await page.getByTestId("ab-toggle").click();
   await expect(page.getByTestId("ab-toggle")).toHaveAttribute("aria-pressed", "false");
 

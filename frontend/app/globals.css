@@ -143,6 +143,12 @@ button:disabled {
   border-radius: 999px;
 }
 
+.ghost-button.is-active {
+  background: rgba(255, 255, 255, 0.7);
+  border-color: rgba(31, 28, 24, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
 .hero-metadata {
   display: flex;
   flex-wrap: wrap;
@@ -322,49 +328,434 @@ button:disabled {
 
 .waveform {
   position: relative;
-  height: 180px;
+  height: 200px;
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(245, 236, 220, 0.9));
   overflow: hidden;
+  --ruler-height: 26px;
+  --preview-lane-height: 56px;
+  --lane-gap: 12px;
 }
 
-.waveform-bars {
+.waveform-canvas {
   position: absolute;
-  inset: 0;
-  background-image: linear-gradient(
-    90deg,
-    rgba(31, 28, 24, 0.25) 12%,
-    transparent 12%,
-    transparent 50%,
-    rgba(31, 28, 24, 0.25) 50%,
-    rgba(31, 28, 24, 0.25) 62%,
-    transparent 62%,
-    transparent
-  );
-  background-size: 12px 100%;
-  opacity: 0.18;
+  left: 0;
+  right: 0;
+  top: calc(var(--ruler-height) + var(--preview-lane-height) + var(--lane-gap));
+  height: calc(100% - var(--ruler-height) - var(--preview-lane-height) - var(--lane-gap));
+  width: 100%;
+  z-index: 1;
+}
+
+.waveform-canvas > div {
+  height: 100%;
+}
+
+.waveform-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.waveform-mode {
+  display: inline-flex;
+  border-radius: 999px;
+  border: 1px solid rgba(31, 28, 24, 0.12);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.waveform-mode .ghost-button {
+  border-radius: 0;
+  border-color: transparent;
+}
+
+.waveform-mode .ghost-button.is-active {
+  background: rgba(31, 28, 24, 0.85);
+  color: #fff6e8;
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.waveform-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.waveform-zoom-label {
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.waveform-zoom input[type="range"] {
+  width: 120px;
+  accent-color: #0ea5a6;
+}
+
+.waveform-zoom-value {
+  font-variant-numeric: tabular-nums;
+  color: rgba(31, 28, 24, 0.75);
+}
+
+.waveform-canvas .wavesurfer-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.waveform-canvas .wavesurfer-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.waveform-canvas .wavesurfer-scroll::-webkit-scrollbar-thumb {
+  background: rgba(31, 28, 24, 0.2);
+  border-radius: 999px;
+}
+
+.waveform-canvas[data-mode="pan"] {
+  cursor: grab;
+}
+
+.waveform-canvas[data-mode="pan"][data-panning="true"] {
+  cursor: grabbing;
+}
+
+.waveform-scroll-indicator {
+  position: relative;
+  height: 6px;
+  margin-top: 0.65rem;
+  border-radius: 999px;
+  background: rgba(31, 28, 24, 0.08);
+  overflow: hidden;
+}
+
+.waveform-scroll-indicator[data-visible="false"] {
+  opacity: 0.3;
+}
+
+.waveform-scroll-thumb {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: rgba(31, 28, 24, 0.45);
+  box-shadow: 0 2px 6px rgba(31, 28, 24, 0.2);
 }
 
 .waveform-region {
-  position: absolute;
-  top: 28px;
-  left: 12%;
-  height: 70px;
-  width: 28%;
   border-radius: 12px;
-  background: rgba(246, 178, 71, 0.35);
-  border: 1px solid rgba(232, 139, 42, 0.6);
+  border: 1px solid rgba(31, 28, 24, 0.35);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  color: rgba(31, 28, 24, 0.8);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.waveform-region-editable {
+  cursor: grab;
+}
+
+.waveform-region-editable:active {
+  cursor: grabbing;
+}
+
+.waveform-region:hover {
+  filter: saturate(1.1);
+  box-shadow: 0 8px 18px rgba(31, 28, 24, 0.16);
+}
+
+.waveform-preview-lane {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--ruler-height);
+  height: var(--preview-lane-height);
+  padding: 0;
+  box-sizing: border-box;
+  z-index: 2;
+}
+
+.waveform-mode-indicator {
+  position: absolute;
+  right: 0.6rem;
+  top: 0.35rem;
+  z-index: 6;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  background: rgba(255, 255, 255, 0.75);
+  color: rgba(31, 28, 24, 0.6);
+  border: 1px solid rgba(31, 28, 24, 0.1);
+}
+
+.waveform-mode-indicator[data-mode="pan"] {
+  background: rgba(232, 139, 42, 0.18);
+  color: rgba(31, 28, 24, 0.8);
+  border-color: rgba(232, 139, 42, 0.4);
+}
+
+.waveform-ruler {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--ruler-height);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.waveform-ruler-track {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.waveform-ruler-inner {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  transform: translateX(0);
+  will-change: transform, width;
+}
+
+.waveform-ruler-tick {
+  position: absolute;
+  bottom: 0.2rem;
+  width: 1px;
+  height: 35%;
+  background: rgba(31, 28, 24, 0.35);
+}
+
+.waveform-ruler-tick.major {
+  height: 60%;
+  background: rgba(31, 28, 24, 0.55);
+}
+
+.waveform-ruler-label {
+  position: absolute;
+  top: -0.1rem;
+  transform: translateX(-50%);
+  font-size: 0.55rem;
+  font-weight: 600;
+  color: rgba(31, 28, 24, 0.6);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.waveform-ruler-tick[data-edge="left"] .waveform-ruler-label {
+  transform: translateX(0);
+}
+
+.waveform-ruler-tick[data-edge="right"] .waveform-ruler-label {
+  transform: translateX(-100%);
+}
+
+.waveform-playhead {
+  position: absolute;
+  top: var(--ruler-height);
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid rgba(14, 165, 166, 0.65);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.waveform-playhead-track {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.waveform-playhead-inner {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  transform: translateX(0);
+  will-change: transform, width;
+}
+
+.waveform-playhead-label {
+  position: absolute;
+  top: calc(-1 * var(--ruler-height) + 0.2rem);
+  transform: translateX(-50%);
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.9);
+  color: rgba(14, 165, 166, 0.85);
+  border: 1px solid rgba(14, 165, 166, 0.35);
+  white-space: nowrap;
+}
+
+.waveform-playhead[data-edge="left"] .waveform-playhead-label {
+  transform: translateX(0);
+}
+
+.waveform-playhead[data-edge="right"] .waveform-playhead-label {
+  transform: translateX(-100%);
+}
+
+.waveform-preview-label {
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: rgba(31, 28, 24, 0.5);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.waveform-preview-range {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  height: 100%;
+  border-radius: 10px;
+  background: rgba(14, 165, 166, 0.18);
+  border: 1px solid rgba(14, 165, 166, 0.45);
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  padding: 0 0.4rem;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.waveform-preview-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0.35rem;
+  bottom: 0.35rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px dashed rgba(31, 28, 24, 0.1);
+  overflow: hidden;
+}
+
+.waveform-preview-track-inner {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  transform: translateX(0);
+  will-change: transform, width;
+}
+
+.waveform-preview-guides {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.waveform-preview-guides-inner {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  transform: translateX(0);
+  will-change: transform, width;
+}
+
+.waveform-preview-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed rgba(31, 28, 24, 0.35);
+}
+
+.waveform-preview-guide-label {
+  position: absolute;
+  top: 0.25rem;
+  left: 0;
+  transform: translateX(-50%);
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.85);
+  color: rgba(31, 28, 24, 0.65);
+  border: 1px solid rgba(31, 28, 24, 0.1);
+  white-space: nowrap;
+}
+
+.waveform-preview-guide[data-edge="left"] .waveform-preview-guide-label {
+  transform: translateX(0);
+}
+
+.waveform-preview-guide[data-edge="right"] .waveform-preview-guide-label {
+  transform: translateX(-100%);
+}
+
+.waveform-preview-range:active {
+  cursor: grabbing;
+}
+
+.waveform-preview-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  background: rgba(14, 165, 166, 0.4);
+  cursor: ew-resize;
+}
+
+.waveform-preview-handle.start {
+  left: 0;
+}
+
+.waveform-preview-handle.end {
+  right: 0;
+}
+
+.waveform-preview-meta {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: rgba(31, 28, 24, 0.72);
+  pointer-events: none;
+}
+
+.waveform-preview-empty {
+  position: absolute;
+  inset: 0;
   display: grid;
   place-items: center;
   font-size: 0.75rem;
-  font-weight: 600;
+  color: rgba(31, 28, 24, 0.45);
 }
 
-.region-alt {
-  left: 52%;
-  width: 24%;
-  background: rgba(14, 165, 166, 0.25);
-  border-color: rgba(14, 165, 166, 0.6);
+.waveform-region-label {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.waveform-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 0 1rem;
 }
 
 .chip-row {
