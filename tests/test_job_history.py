@@ -1,8 +1,6 @@
 from datetime import datetime
 from pathlib import Path
 
-import pytest
-
 from app.api import routes_jobs
 from app.api.schemas import CleanupRequest, Job, JobMixSummary, JobStatus
 

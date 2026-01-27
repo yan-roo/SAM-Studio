@@ -4,3 +4,16 @@ numpy
 soundfile
 python-multipart
 python-dotenv
+torch
+torchaudio
+huggingface_hub<1,>=0.23.0
+safetensors
+transformers<5,>=4.54.0
+einops
+timm
+torchvision
+torchcodec
+torchdiffeq
+scipy
+tensorflow
+tensorflow-hub

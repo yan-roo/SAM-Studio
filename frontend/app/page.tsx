@@ -232,9 +232,12 @@ export default function Home() {
   const handleCleanup = async () => {
     setCleanupMessage(null);
     const keepLatestValue = cleanupKeepLatest.trim();
-    const keepLatest = keepLatestValue ? Number(keepLatestValue) : undefined;
+    const keepLatest = keepLatestValue ? Number(keepLatestValue) : Number.NaN;
+    const keepLatestNormalized = Number.isFinite(keepLatest)
+      ? Math.max(0, keepLatest)
+      : undefined;
     const payload = {
-      keepLatest: Number.isFinite(keepLatest) ? Math.max(0, keepLatest) : undefined,
+      keepLatest: keepLatestNormalized,
       clearOutputs: cleanupOutputs,
       clearCache: cleanupCache,
     };
@@ -504,6 +507,11 @@ export default function Home() {
   const handlePreviewSegment = (label: string, segment: CandidateSegment) => {
     const duration = Math.max(segment.t1 - segment.t0, 0.5);
     applyPreviewWindow(segment.t0, duration, label);
+  };
+
+  const handlePreviewRangeChange = (start: number, end: number) => {
+    const duration = Math.max(end - start, 0.5);
+    applyPreviewWindow(start, duration);
   };
 
   const pollMixStatus = async (jobId: string, requestId: number) => {
@@ -776,7 +784,6 @@ export default function Home() {
           </button>
         </div>
         <div className="hero-metadata">
-          <span>Queue: ready</span>
           <span>Cache: enabled</span>
           <span>Model: sam-audio-small</span>
         </div>
@@ -975,6 +982,7 @@ export default function Home() {
           previewStartSeconds={previewStartSeconds}
           previewSeconds={previewSeconds}
           onSelectSegment={handlePreviewSegment}
+          onPreviewRangeChange={handlePreviewRangeChange}
           message={
             job
               ? "Click a segment to set the preview window, then use Render preview."

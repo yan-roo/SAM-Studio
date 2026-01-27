@@ -18,100 +18,71 @@ brew install ffmpeg libsndfile
 # sudo apt-get install ffmpeg libsndfile1
 ```
 
-## Backend setup
+## Quick start (3 lines setup + 2 lines run)
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
+scripts/setup_all.sh --dev
+export HF_TOKEN=hf_xxx
+scripts/download_sam_audio_model.sh && scripts/setup_env.sh
 ```
 
-Required (torch/torchaudio, required for SAM-Audio):
+Run the app (two terminals):
 
 ```bash
-pip install -r requirements-separation.txt
+scripts/run_api.sh
+scripts/run_frontend.sh
 ```
 
-Required (SAM-Audio text prompting):
-
-```bash
-pip install -r requirements-sam-audio.txt
-```
-
-Optional (YAMNet candidates):
-
-```bash
-pip install -r requirements-yamnet.txt
-```
-
-SAM-Audio requires Hugging Face access to `facebook/sam-audio-small` (set `HF_TOKEN`).
-
-### Manual model downloads (curl)
-
-You can download the SAM-Audio weights without `huggingface-cli` as long as your token has access.
-
-```bash
-mkdir -p models/sam-audio-small
-curl -L -H "Authorization: Bearer $HF_TOKEN" \
-  -o models/sam-audio-small/config.json \
-  https://huggingface.co/facebook/sam-audio-small/resolve/main/config.json
-curl -L -H "Authorization: Bearer $HF_TOKEN" \
-  -o models/sam-audio-small/checkpoint.pt \
-  https://huggingface.co/facebook/sam-audio-small/resolve/main/checkpoint.pt
-```
-
-Set `MODEL_SAM_AUDIO_ID=models/sam-audio-small` (the `models/` folder is gitignored).
-
-## Quick start (dev)
-
-```bash
-uvicorn app.api.main:app --reload --reload-dir app --port 8000
-
-cd frontend
-npm install
-npm run dev
-```
-
-## Frontend setup
-
-```bash
-cd frontend
-npm install
-```
-
-Use the Quick start section to run the dev server. The UI is at
-`http://localhost:3000` and the API is at `http://localhost:8000`.
+The UI is at `http://localhost:3000` and the API is at `http://localhost:8000`.
 
 Frontend requests default to `/api` and are proxied to `http://localhost:8000` by
-`frontend/next.config.ts`. To point elsewhere, set `NEXT_PUBLIC_API_BASE_URL`.
+`frontend/next.config.ts`.
+
+## Google Colab (GPU-friendly setup)
+
+In Google Colab, use a GPU runtime, then run:
+
+```python
+import os
+os.environ["HF_TOKEN"] = "hf_xxx"  # required for model download
+```
+
+```bash
+git clone <your-repo-url>
+cd SAM-Studio
+bash scripts/setup_colab.sh --download-model --download-assets
+```
+
+Notes:
+- `scripts/setup_colab.sh` avoids reinstalling `torch`, so Colab's GPU build stays intact.
+- Use `--no-yamnet` if you want a faster install without TensorFlow.
 
 ## Environment
 
-Copy `.env.example` to `.env` and adjust as needed.
-The API auto-loads `.env` at startup.
-`.env.example` documents the default values (no overrides).
+Create/update `.env` with:
 
-### YAMNet settings
+```bash
+scripts/setup_env.sh
+```
 
-- `YAMNET_HUB_URL`: TF Hub model URL.
-- `YAMNET_CLASS_MAP_URL`: CSV label map URL.
-- `YAMNET_CLASS_MAP_PATH`: Local path to cache the label map.
+The API auto-loads `.env` at startup. The script applies safe defaults and will
+auto-set `MODEL_SAM_AUDIO_ID=models/sam-audio-small` if that folder exists.
+`.env.example` documents the default values.
 
-### Separation settings
+### Core settings
 
-- `HF_TOKEN`: Hugging Face token (mapped to `HUGGINGFACE_HUB_TOKEN`) for SAM-Audio weights.
+- `HF_TOKEN`: Hugging Face token for SAM-Audio weights.
+- `MODEL_SAM_AUDIO_ID`: model path or HF repo id. Defaults to `models/sam-audio-small` when present.
 - `SAM_AUDIO_DEVICE`: `auto` (default, prefers `cuda` then `mps`), `cuda`, `mps`, or `cpu`.
-- `SAM_AUDIO_PREDICT_SPANS`: enable SAM-Audio span prediction (`true/false`).
-- `SAM_AUDIO_RERANKING_CANDIDATES`: number of candidates to generate (default `1`).
-- `SAM_AUDIO_DISABLE_RANKERS`: disable text/video rankers to avoid extra downloads (default `true`).
-- `SAM_AUDIO_DISABLE_SPAN_PREDICTOR`: skip loading span predictor weights (default `true`).
-- `SAM_AUDIO_DEVICE_FALLBACK`: if `true`, retry on CPU when GPU/MPS runs out of memory.
+
+### Advanced settings (optional)
+
 - `SAM_AUDIO_CHUNK_SECONDS`: chunk size (seconds) for full mixes; `0` disables chunking (default `30`).
 - `SAM_AUDIO_CHUNK_OVERLAP`: overlap seconds between chunks to smooth joins (default `0.2`).
 - `PREVIEW_SECONDS`: default preview length when requesting a preview mix.
-- `JOB_MIX_HISTORY_LIMIT`: number of mix history entries to keep per job (default `10`).
+
+Other internal toggles (YAMNet URLs, SAM-Audio rankers/span predictor, history limits)
+are documented in `.env.example`, but most users should leave them at defaults.
 
 Preview mixes can be requested by posting to `/jobs/{id}/mix` with:
 
@@ -125,9 +96,76 @@ Preview mixes can be requested by posting to `/jobs/{id}/mix` with:
 }
 ```
 
-### Frontend settings
+## Benchmark assets (3 short clips)
 
-- `NEXT_PUBLIC_API_BASE_URL`: Override API base URL (default `/api`).
+Download a small, repeatable benchmark pack:
+
+```bash
+scripts/download_benchmark_assets.sh
+```
+
+Assets are written to `data/benchmarks/assets` (gitignored).
+
+Run the benchmark and print a timing table:
+
+```bash
+.venv/bin/python scripts/benchmark_sam_audio.py --preview-seconds 20 --warmup 1 --repeats 3
+```
+
+This prints a Markdown timing table (mean + P95 over repeats) and writes JSON
+(`meta` + `results`) to `data/benchmarks/benchmark-results.json`. For a quick smoke test, add
+`--limit 1 --preview-seconds 3 --warmup 1 --repeats 2`.
+
+Force a device for comparison:
+
+```bash
+SAM_AUDIO_DEVICE=mps .venv/bin/python scripts/benchmark_sam_audio.py --preview-seconds 20 --warmup 1 --repeats 3 --json-out data/benchmarks/benchmark-results-mps.json
+SAM_AUDIO_DEVICE=cpu .venv/bin/python scripts/benchmark_sam_audio.py --preview-seconds 20 --warmup 1 --repeats 3 --json-out data/benchmarks/benchmark-results-cpu.json
+```
+
+Generate a device comparison table from the JSON results:
+
+```bash
+.venv/bin/python scripts/benchmark_compare.py
+```
+
+Included clips:
+- `speech_voices_20s_16k.wav` (torchaudio VOiCES speech sample)
+- `whistle_train_20s_16k.wav` (torchaudio tutorial whistle)
+- `music_sample2_20s_16k.wav` (Wikimedia Commons music sample)
+- `mix_speech_plus_music_20s_16k.wav` (local mix for discriminative prompts)
+
+Suggested prompts:
+- `speech`
+- `whistle` or `train whistle`
+- `music`
+- `speech` + `music` (on the mixed clip)
+
+### Example benchmark results (local)
+
+Hardware used for these results: MacBook Pro (Apple M1 Pro, 16 GB RAM), macOS, Python 3.11.
+
+Settings used: `preview_seconds=20`, `warmup=1`, `repeats=3`.
+
+MPS (`SAM_AUDIO_DEVICE=mps`):
+
+| case | prompts | mean_s | p95_s | x_realtime_mean |
+| --- | --- | ---: | ---: | ---: |
+| speech | speech | 30.9 | 37.2 | 0.65 |
+| whistle | whistle | 45.6 | 47.3 | 0.44 |
+| music | music | 51.5 | 52.6 | 0.39 |
+| mix_speech_music | speech, music | 99.0 | 99.8 | 0.20 |
+
+CPU (`SAM_AUDIO_DEVICE=cpu`):
+
+| case | prompts | mean_s | p95_s | x_realtime_mean |
+| --- | --- | ---: | ---: | ---: |
+| speech | speech | 58.3 | 60.2 | 0.34 |
+| whistle | whistle | 58.5 | 63.9 | 0.34 |
+| music | music | 58.7 | 61.0 | 0.34 |
+| mix_speech_music | speech, music | 112.9 | 116.7 | 0.18 |
+
+These numbers are hardware- and cache-dependent; use them as a relative baseline.
 
 ## Testing
 

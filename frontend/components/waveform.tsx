@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import WaveSurfer from "wavesurfer.js";
@@ -21,6 +23,7 @@ type WaveformPanelProps = {
   previewStartSeconds?: number;
   previewSeconds?: number;
   onSelectSegment?: (label: string, segment: CandidateSegment) => void;
+  onPreviewRangeChange?: (start: number, end: number) => void;
   message?: string;
 };
 
@@ -59,12 +62,22 @@ const hashLabel = (label: string) =>
 const toTestId = (value: string) =>
   value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
-const segmentKey = (value: number) => value.toFixed(1).replace(".", "-");
+const segmentKey = (value: number) => String(Math.round(value * 1000));
 
 const clampZoom = (value: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
 
-const makeSegmentId = (label: string, start: number) =>
-  `segment-${toTestId(label)}-${segmentKey(start)}`;
+const makeSegmentBaseId = (label: string, start: number, end: number) =>
+  `segment-${toTestId(label)}-${segmentKey(start)}-${segmentKey(end)}`;
+
+const buildSegmentIds = (segments: WaveformSegment[]) => {
+  const counts = new Map<string, number>();
+  return segments.map((segment) => {
+    const baseId = makeSegmentBaseId(segment.label, segment.t0, segment.t1);
+    const count = counts.get(baseId) ?? 0;
+    counts.set(baseId, count + 1);
+    return count === 0 ? baseId : `${baseId}-${count}`;
+  });
+};
 
 const RULER_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
 
@@ -78,6 +91,7 @@ export function WaveformPanel({
   previewStartSeconds = 0,
   previewSeconds = 0,
   onSelectSegment,
+  onPreviewRangeChange,
   message,
 }: WaveformPanelProps) {
   const waveformRef = useRef<HTMLDivElement | null>(null);
@@ -85,6 +99,9 @@ export function WaveformPanel({
   const regionsRef = useRef<RegionsPlugin | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const onSelectSegmentRef = useRef<WaveformPanelProps["onSelectSegment"]>(null);
+  const onPreviewRangeChangeRef = useRef<
+    WaveformPanelProps["onPreviewRangeChange"]
+  >(null);
   const zoomRef = useRef(DEFAULT_ZOOM);
   const previewTrackRef = useRef<HTMLDivElement | null>(null);
   const previewTrackInnerRef = useRef<HTMLDivElement | null>(null);
@@ -108,6 +125,9 @@ export function WaveformPanel({
   const seekDragRef = useRef(false);
 
   const [segmentOverridesVersion, setSegmentOverridesVersion] = useState(0);
+  const [segmentOverridesSnapshot, setSegmentOverridesSnapshot] = useState<
+    Map<string, CandidateSegment>
+  >(new Map());
   const [duration, setDuration] = useState<number | null>(durationSeconds ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,12 +157,140 @@ export function WaveformPanel({
   }, [onSelectSegment]);
 
   useEffect(() => {
+    onPreviewRangeChangeRef.current = onPreviewRangeChange;
+  }, [onPreviewRangeChange]);
+
+  function resolveScrollContainer(wavesurfer?: WaveSurfer | null) {
+    if (scrollContainerRef.current) {
+      return scrollContainerRef.current;
+    }
+    const wrapper = (wavesurfer ?? wavesurferRef.current)?.getWrapper?.();
+    const scrollContainer = wrapper?.parentElement as HTMLDivElement | null;
+    if (scrollContainer) {
+      scrollContainerRef.current = scrollContainer;
+    }
+    return scrollContainer;
+  }
+
+  function updateOverlayTracks(scrollContainer?: HTMLDivElement | null) {
+    const inner = previewTrackInnerRef.current;
+    const guides = previewGuidesInnerRef.current;
+    const ruler = rulerInnerRef.current;
+    const playhead = playheadInnerRef.current;
+    if (!inner && !guides && !ruler && !playhead) {
+      return;
+    }
+    const wavesurfer = wavesurferRef.current;
+    const wrapper = wavesurfer?.getWrapper();
+    const scrollLeft = wavesurfer?.getScroll?.() ?? 0;
+    const scrollTarget = scrollContainer ?? resolveScrollContainer();
+    const totalWidth = Math.max(
+      wrapper?.scrollWidth || 0,
+      scrollTarget?.scrollWidth || 0,
+      wrapper?.offsetWidth || 0,
+      scrollTarget?.clientWidth || 0,
+      wavesurfer?.getWidth?.() || 0,
+    );
+    if (!totalWidth) {
+      return;
+    }
+    const viewportWidth =
+      scrollTarget?.clientWidth ?? wavesurfer?.getWidth?.() ?? totalWidth;
+    const clampedWidth = Math.max(viewportWidth, totalWidth);
+    const effectiveScrollLeft = scrollTarget ? scrollTarget.scrollLeft : scrollLeft;
+    if (inner) {
+      inner.style.width = `${clampedWidth}px`;
+      inner.style.transform = `translateX(${-effectiveScrollLeft}px)`;
+    }
+    if (guides) {
+      guides.style.width = `${clampedWidth}px`;
+      guides.style.transform = `translateX(${-effectiveScrollLeft}px)`;
+    }
+    if (ruler) {
+      ruler.style.width = `${clampedWidth}px`;
+      ruler.style.transform = `translateX(${-effectiveScrollLeft}px)`;
+    }
+    if (playhead) {
+      playhead.style.width = `${clampedWidth}px`;
+      playhead.style.transform = `translateX(${-effectiveScrollLeft}px)`;
+    }
+  }
+
+  function updateScrollIndicator() {
+    const scrollContainer = resolveScrollContainer();
+    updateOverlayTracks(scrollContainer);
+    if (!scrollContainer) {
+      setScrollIndicator((prev) =>
+        prev.visible ? { ...prev, visible: false, left: 0, width: 100 } : prev,
+      );
+      return;
+    }
+    const { scrollWidth, clientWidth, scrollLeft } = scrollContainer;
+    if (scrollWidth <= clientWidth + 1) {
+      setScrollIndicator((prev) =>
+        prev.visible ? { ...prev, visible: false, left: 0, width: 100 } : prev,
+      );
+      return;
+    }
+    const maxScroll = Math.max(1, scrollWidth - clientWidth);
+    const widthPct = Math.min(100, Math.max(8, (clientWidth / scrollWidth) * 100));
+    const leftPct = (scrollLeft / maxScroll) * (100 - widthPct);
+    setScrollIndicator((prev) => {
+      const next = { visible: true, left: leftPct, width: widthPct };
+      if (
+        prev.visible &&
+        Math.abs(prev.left - next.left) < 0.5 &&
+        Math.abs(prev.width - next.width) < 0.5
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }
+
+  function seekFromClientX(clientX: number) {
+    const wavesurfer = wavesurferRef.current;
+    if (!wavesurfer) {
+      return;
+    }
+    const durationValue = wavesurfer.getDuration() || duration || durationSeconds || 0;
+    if (!durationValue) {
+      return;
+    }
+    const wrapper = wavesurfer.getWrapper();
+    const scrollTarget = resolveScrollContainer();
+    const totalWidth = Math.max(
+      wrapper?.scrollWidth || 0,
+      scrollTarget?.scrollWidth || 0,
+      wrapper?.offsetWidth || 0,
+      scrollTarget?.clientWidth || 0,
+    );
+    if (!totalWidth) {
+      return;
+    }
+    const baseRect =
+      scrollTarget?.getBoundingClientRect() ?? wrapper?.getBoundingClientRect();
+    if (!baseRect) {
+      return;
+    }
+    const scrollLeft = scrollTarget?.scrollLeft ?? wavesurfer.getScroll?.() ?? 0;
+    const offsetX = clientX - baseRect.left + scrollLeft;
+    const ratio = Math.max(0, Math.min(1, offsetX / totalWidth));
+    wavesurfer.seekTo(ratio);
+    setPlayheadTime(ratio * durationValue);
+  }
+
+  useEffect(() => {
     interactionModeRef.current = interactionMode;
   }, [interactionMode]);
 
   useEffect(() => {
+    setSegmentOverridesSnapshot(new Map(segmentOverridesRef.current));
+  }, [segmentOverridesVersion]);
+
+  useEffect(() => {
     const validIds = new Set(
-      segments.map((segment) => makeSegmentId(segment.label, segment.t0)),
+      buildSegmentIds(segments.filter((segment) => segment.t1 > segment.t0)),
     );
     let changed = false;
     segmentOverridesRef.current.forEach((_segment, key) => {
@@ -292,6 +440,7 @@ export function WaveformPanel({
       setLoading(false);
       setIsReady(true);
       setPlayheadTime(0);
+      resolveScrollContainer(wavesurfer);
       updateScrollIndicator();
       if (wavesurfer.getDuration() > 0) {
         try {
@@ -320,7 +469,6 @@ export function WaveformPanel({
       setPlayheadTime(wavesurfer.getDuration());
     });
     wavesurfer.on("timeupdate", handlePlayheadUpdate);
-    wavesurfer.on("seek", handlePlayheadUpdate);
     wavesurfer.on("seeking", handlePlayheadUpdate);
     wavesurfer.on("interaction", handlePlayheadUpdate);
 
@@ -354,108 +502,6 @@ export function WaveformPanel({
       }
     };
   }, [audioUrl]);
-
-  const resolveScrollContainer = () => {
-    if (scrollContainerRef.current) {
-      return scrollContainerRef.current;
-    }
-    const root = waveformRef.current;
-    if (!root) {
-      return null;
-    }
-    const candidates = [
-      root.querySelector(".wavesurfer-scroll"),
-      root.querySelector(".wavesurfer-wrapper"),
-      root.querySelector(".wavesurfer"),
-    ].filter(Boolean) as HTMLDivElement[];
-    const wrapper = wavesurferRef.current?.getWrapper();
-    if (wrapper?.parentElement) {
-      candidates.push(wrapper.parentElement as HTMLDivElement);
-    }
-    const scrollContainer =
-      candidates.find((candidate) => candidate.scrollWidth > candidate.clientWidth) ??
-      candidates[0];
-    if (scrollContainer) {
-      scrollContainerRef.current = scrollContainer;
-    }
-    return scrollContainer ?? null;
-  };
-
-  const updateScrollIndicator = () => {
-    const scrollContainer = resolveScrollContainer();
-    updateOverlayTracks(scrollContainer);
-    if (!scrollContainer) {
-      setScrollIndicator((prev) =>
-        prev.visible ? { ...prev, visible: false, left: 0, width: 100 } : prev,
-      );
-      return;
-    }
-    const { scrollWidth, clientWidth, scrollLeft } = scrollContainer;
-    if (scrollWidth <= clientWidth + 1) {
-      setScrollIndicator((prev) =>
-        prev.visible ? { ...prev, visible: false, left: 0, width: 100 } : prev,
-      );
-      return;
-    }
-    const maxScroll = Math.max(1, scrollWidth - clientWidth);
-    const widthPct = Math.min(100, Math.max(8, (clientWidth / scrollWidth) * 100));
-    const leftPct = (scrollLeft / maxScroll) * (100 - widthPct);
-    setScrollIndicator((prev) => {
-      const next = { visible: true, left: leftPct, width: widthPct };
-      if (
-        prev.visible &&
-        Math.abs(prev.left - next.left) < 0.5 &&
-        Math.abs(prev.width - next.width) < 0.5
-      ) {
-        return prev;
-      }
-      return next;
-    });
-  };
-
-  const updateOverlayTracks = (scrollContainer?: HTMLDivElement | null) => {
-    const inner = previewTrackInnerRef.current;
-    const guides = previewGuidesInnerRef.current;
-    const ruler = rulerInnerRef.current;
-    const playhead = playheadInnerRef.current;
-    if (!inner && !guides && !ruler && !playhead) {
-      return;
-    }
-    const wavesurfer = wavesurferRef.current;
-    const wrapper = wavesurfer?.getWrapper();
-    const scrollLeft = wavesurfer?.getScroll?.() ?? 0;
-    const scrollTarget = scrollContainer ?? resolveScrollContainer();
-    const totalWidth = Math.max(
-      wrapper?.scrollWidth || 0,
-      scrollTarget?.scrollWidth || 0,
-      wrapper?.offsetWidth || 0,
-      scrollTarget?.clientWidth || 0,
-      wavesurfer?.getWidth?.() || 0,
-    );
-    if (!totalWidth) {
-      return;
-    }
-    const viewportWidth =
-      scrollTarget?.clientWidth ?? wavesurfer?.getWidth?.() ?? totalWidth;
-    const clampedWidth = Math.max(viewportWidth, totalWidth);
-    const effectiveScrollLeft = scrollTarget ? scrollTarget.scrollLeft : scrollLeft;
-    if (inner) {
-      inner.style.width = `${clampedWidth}px`;
-      inner.style.transform = `translateX(${-effectiveScrollLeft}px)`;
-    }
-    if (guides) {
-      guides.style.width = `${clampedWidth}px`;
-      guides.style.transform = `translateX(${-effectiveScrollLeft}px)`;
-    }
-    if (ruler) {
-      ruler.style.width = `${clampedWidth}px`;
-      ruler.style.transform = `translateX(${-effectiveScrollLeft}px)`;
-    }
-    if (playhead) {
-      playhead.style.width = `${clampedWidth}px`;
-      playhead.style.transform = `translateX(${-effectiveScrollLeft}px)`;
-    }
-  };
 
   const startPan = (clientX: number) => {
     if (interactionMode !== "pan") {
@@ -496,20 +542,20 @@ export function WaveformPanel({
   };
 
   const segmentItems = useMemo<WaveformSegmentItem[]>(() => {
-    const baseItems = segments
-      .filter((segment) => segment.t1 > segment.t0)
-      .map((segment) => {
-        const regionId = makeSegmentId(segment.label, segment.t0);
-        const override = segmentOverridesRef.current.get(regionId);
-        return {
-          ...segment,
-          t0: override?.t0 ?? segment.t0,
-          t1: override?.t1 ?? segment.t1,
-          score: Number.isFinite(segment.score) ? segment.score : 0,
-          hue: hashLabel(segment.label) % 360,
-          regionId,
-        };
-      });
+    const filteredSegments = segments.filter((segment) => segment.t1 > segment.t0);
+    const segmentIds = buildSegmentIds(filteredSegments);
+    const baseItems = filteredSegments.map((segment, index) => {
+      const regionId = segmentIds[index];
+      const override = segmentOverridesSnapshot.get(regionId);
+      return {
+        ...segment,
+        t0: override?.t0 ?? segment.t0,
+        t1: override?.t1 ?? segment.t1,
+        score: Number.isFinite(segment.score) ? segment.score : 0,
+        hue: hashLabel(segment.label) % 360,
+        regionId,
+      };
+    });
     if (!baseItems.length) {
       return [];
     }
@@ -548,7 +594,7 @@ export function WaveformPanel({
       ...segment,
       showLabel: showLabel.has(index),
     }));
-  }, [segments, segmentOverridesVersion]);
+  }, [segments, segmentOverridesSnapshot]);
 
   useEffect(() => {
     segmentItemsRef.current = segmentItems;
@@ -637,38 +683,6 @@ export function WaveformPanel({
       region.element.setAttribute("data-segment-end", nextEnd.toFixed(1));
     }
     onSelectSegmentRef.current?.(meta.label, updatedSegment);
-  };
-
-  const seekFromClientX = (clientX: number) => {
-    const wavesurfer = wavesurferRef.current;
-    if (!wavesurfer) {
-      return;
-    }
-    const durationValue = wavesurfer.getDuration() || duration || durationSeconds || 0;
-    if (!durationValue) {
-      return;
-    }
-    const wrapper = wavesurfer.getWrapper();
-    const scrollTarget = resolveScrollContainer();
-    const totalWidth = Math.max(
-      wrapper?.scrollWidth || 0,
-      scrollTarget?.scrollWidth || 0,
-      wrapper?.offsetWidth || 0,
-      scrollTarget?.clientWidth || 0,
-    );
-    if (!totalWidth) {
-      return;
-    }
-    const baseRect =
-      scrollTarget?.getBoundingClientRect() ?? wrapper?.getBoundingClientRect();
-    if (!baseRect) {
-      return;
-    }
-    const scrollLeft = scrollTarget?.scrollLeft ?? wavesurfer.getScroll?.() ?? 0;
-    const offsetX = clientX - baseRect.left + scrollLeft;
-    const ratio = Math.max(0, Math.min(1, offsetX / totalWidth));
-    wavesurfer.seekTo(ratio);
-    setPlayheadTime(ratio * durationValue);
   };
 
   const shouldIgnoreSeekTarget = (target: HTMLElement | null) => {
@@ -798,7 +812,7 @@ export function WaveformPanel({
   };
 
   const handlePreviewPointerDown = (
-    event: ReactPointerEvent<HTMLDivElement>,
+    event: ReactPointerEvent<HTMLElement>,
     mode: "move" | "resize-start" | "resize-end",
   ) => {
     if (!previewTrackRef.current) {
@@ -821,7 +835,7 @@ export function WaveformPanel({
     (event.target as HTMLElement).setPointerCapture(event.pointerId);
   };
 
-  const handlePreviewPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const handlePreviewPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
     if (!previewDragRef.current) {
       return;
     }
@@ -854,7 +868,7 @@ export function WaveformPanel({
     setPreviewDraft({ start: clamped.start, end: clamped.end });
   };
 
-  const handlePreviewPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const handlePreviewPointerUp = (event: ReactPointerEvent<HTMLElement>) => {
     if (!previewDragRef.current) {
       return;
     }
@@ -863,11 +877,7 @@ export function WaveformPanel({
     const finalStart = previewDraft?.start ?? previewStartSeconds;
     const finalEnd = previewDraft?.end ?? previewStartSeconds + previewSeconds;
     if (durationValue && finalEnd > finalStart) {
-      onSelectSegmentRef.current?.("Preview selection", {
-        t0: finalStart,
-        t1: finalEnd,
-        score: 1,
-      });
+      onPreviewRangeChangeRef.current?.(finalStart, finalEnd);
     }
     setIsPreviewDragging(false);
     (event.target as HTMLElement).releasePointerCapture(event.pointerId);
@@ -1092,6 +1102,7 @@ export function WaveformPanel({
                     width: `${previewWidth}%`,
                   }}
                   data-testid="preview-range"
+                  aria-label={`Preview range ${previewStartValue.toFixed(1)}s to ${previewEndValue.toFixed(1)}s`}
                   onPointerDown={(event) => handlePreviewPointerDown(event, "move")}
                   onPointerMove={handlePreviewPointerMove}
                   onPointerUp={handlePreviewPointerUp}
@@ -1117,8 +1128,12 @@ export function WaveformPanel({
                     onPointerUp={handlePreviewPointerUp}
                     onPointerCancel={handlePreviewPointerUp}
                   />
-                  <span className="waveform-preview-meta">
-                    {`${previewStartValue.toFixed(1)}s–${previewEndValue.toFixed(1)}s`}
+                  <span className="waveform-preview-meta" data-testid="preview-range-meta">
+                    <span data-testid="preview-range-start">
+                      {previewStartValue.toFixed(1)}
+                    </span>
+                    s–
+                    <span data-testid="preview-range-end">{previewEndValue.toFixed(1)}</span>s
                   </span>
                 </div>
               ) : null}

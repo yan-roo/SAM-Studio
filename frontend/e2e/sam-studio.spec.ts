@@ -252,16 +252,17 @@ test("upload, preview, cancel, restart, and render mix", async ({ page }) => {
   expect(tickCount).toBeGreaterThan(0);
   const previewRange = page.getByTestId("preview-range");
   await expect(previewRange).toBeVisible();
-  const previewLeft = await previewRange.evaluate((el) =>
-    Number.parseFloat((el as HTMLElement).style.left),
-  );
-  const previewWidth = await previewRange.evaluate((el) =>
-    Number.parseFloat((el as HTMLElement).style.width),
-  );
-  const durationFromLeft = 2 / (previewLeft / 100);
-  const durationFromWidth = 5 / (previewWidth / 100);
-  const durationEstimate = (durationFromLeft + durationFromWidth) / 2;
-  expect(durationEstimate).toBeGreaterThan(0);
+  const durationLabel = await page
+    .getByTestId("waveform-panel")
+    .locator(".panel-tag")
+    .innerText();
+  const durationMatch = durationLabel.match(/Duration\s+(\d+):(\d{2})/);
+  if (!durationMatch) {
+    throw new Error(`Unexpected duration label: ${durationLabel}`);
+  }
+  const timelineDuration =
+    Number(durationMatch[1]) * 60 + Number.parseInt(durationMatch[2], 10);
+  expect(timelineDuration).toBeGreaterThan(0);
   const waveformSegment = page.locator("[data-testid^='waveform-segment-']").first();
   await expect(waveformSegment).toBeVisible();
   await expect(page.getByTestId("waveform-scroll-indicator")).toHaveAttribute(
@@ -275,26 +276,30 @@ test("upload, preview, cancel, restart, and render mix", async ({ page }) => {
 
   const segmentStartValue = await waveformSegment.getAttribute("data-segment-start");
   const segmentEndValue = await waveformSegment.getAttribute("data-segment-end");
+  const segmentEnd = Number(segmentEndValue ?? segmentStartValue ?? 0);
   expect(segmentStartValue).not.toBeNull();
   await waveformSegment.click();
   const previewStartValue = Number(await page.getByTestId("preview-start").inputValue());
   expect(previewStartValue).toBeCloseTo(Number(segmentStartValue ?? 0), 1);
+  const previewRangeStart = Number(
+    await page.getByTestId("preview-range-start").innerText(),
+  );
+  const previewRangeEnd = Number(
+    await page.getByTestId("preview-range-end").innerText(),
+  );
+  expect(previewRangeStart).toBeCloseTo(Number(segmentStartValue ?? 0), 1);
+  expect(previewRangeEnd).toBeGreaterThan(previewRangeStart);
   const previewLeftAfter = await previewRange.evaluate((el) =>
     Number.parseFloat((el as HTMLElement).style.left),
   );
   const previewWidthAfter = await previewRange.evaluate((el) =>
     Number.parseFloat((el as HTMLElement).style.width),
   );
-  const segmentStart = Number(segmentStartValue ?? 0);
-  const segmentEnd = Number(segmentEndValue ?? segmentStart);
-  const segmentDuration = Math.max(0.5, segmentEnd - segmentStart);
-  expect(previewLeftAfter).toBeCloseTo((segmentStart / durationEstimate) * 100, 0);
-  expect(previewWidthAfter).toBeCloseTo((segmentDuration / durationEstimate) * 100, 0);
-  const previewMetaText = await previewRange.locator(".waveform-preview-meta").innerText();
-  const previewMatch = previewMetaText.match(/([\d.]+)s[–-]([\d.]+)s/);
-  const previewDurationFromRange = previewMatch
-    ? Number.parseFloat((Number(previewMatch[2]) - Number(previewMatch[1])).toFixed(1))
-    : Number.parseFloat(segmentDuration.toFixed(1));
+  const previewDurationFromRange = Number.parseFloat(
+    (previewRangeEnd - previewRangeStart).toFixed(1),
+  );
+  expect(previewLeftAfter).toBeCloseTo((previewRangeStart / timelineDuration) * 100, 0);
+  expect(previewWidthAfter).toBeCloseTo((previewDurationFromRange / timelineDuration) * 100, 0);
   const presetDurations = new Set([5, 10, 20, 30]);
   const expectedSelect = presetDurations.has(previewDurationFromRange)
     ? String(previewDurationFromRange)
@@ -328,7 +333,7 @@ test("upload, preview, cancel, restart, and render mix", async ({ page }) => {
       return parts.length >= 6 ? parts[4] : 0;
     });
   const snapTarget = Number.isFinite(speechEndValue) ? speechEndValue : 10;
-  const targetPercent = snapTarget / durationEstimate;
+  const targetPercent = snapTarget / timelineDuration;
   const scrollOffset = -previewTrackTranslateX;
   const targetX =
     previewTrackBox.x + previewTrackInnerWidth * targetPercent - scrollOffset;

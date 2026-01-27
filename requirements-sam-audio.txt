@@ -1,2 +1,0 @@
-# Requires Python 3.11/3.12 and torch+torchaudio (see requirements-separation.txt).
-git+https://github.com/facebookresearch/sam-audio.git

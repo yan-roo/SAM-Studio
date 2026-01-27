@@ -121,11 +121,16 @@ export function ABPlayer({
   const restartLabel = renderMode === "preview" ? "Restart preview" : "Restart mix";
 
   useEffect(() => {
-    if (!outputUrl) {
-      setActiveSide("original");
-    } else {
-      setActiveSide("processed");
-    }
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) {
+        return;
+      }
+      setActiveSide(outputUrl ? "processed" : "original");
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [outputUrl]);
 
   const handleToggle = () => {
