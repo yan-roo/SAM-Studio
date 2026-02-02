@@ -16,6 +16,10 @@ build/
 
 data/
 models/
+!app/worker/models/
+!app/worker/models/**
+app/worker/models/__pycache__/
+app/worker/models/*.pyc
 *.log
 .DS_Store
 *.mp3

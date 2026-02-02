@@ -48,9 +48,9 @@ os.environ["HF_TOKEN"] = "hf_xxx"  # required for model download
 ```
 
 ```bash
-git clone <your-repo-url>
-cd SAM-Studio
-bash scripts/setup_colab.sh --download-model --download-assets
+!git clone https://github.com/yan-roo/SAM-Studio.git
+%cd SAM-Studio
+!bash scripts/setup_colab.sh --download-model --download-assets
 ```
 
 Notes:
