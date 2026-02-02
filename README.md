@@ -38,25 +38,6 @@ The UI is at `http://localhost:3000` and the API is at `http://localhost:8000`.
 Frontend requests default to `/api` and are proxied to `http://localhost:8000` by
 `frontend/next.config.ts`.
 
-## Google Colab (GPU-friendly setup)
-
-In Google Colab, use a GPU runtime, then run:
-
-```python
-import os
-os.environ["HF_TOKEN"] = "hf_xxx"  # required for model download
-```
-
-```bash
-!git clone https://github.com/yan-roo/SAM-Studio.git
-%cd SAM-Studio
-!bash scripts/setup_colab.sh --download-model --download-assets
-```
-
-Notes:
-- `scripts/setup_colab.sh` avoids reinstalling `torch`, so Colab's GPU build stays intact.
-- Use `--no-yamnet` if you want a faster install without TensorFlow.
-
 ## Environment
 
 Create/update `.env` with:
