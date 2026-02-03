@@ -22,6 +22,7 @@ from app.api.schemas import (
 )
 from app.core import audio_io
 from app.core.config import DEFAULT_SAMPLE_RATE, settings
+from app.core.errors import classify_error
 from app.worker import tasks
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -156,6 +157,7 @@ def _set_mix_state(
     status: JobStatus,
     output_url: str | None = None,
     detail: str | None = None,
+    error_code: str | None = None,
     token: str | None = None,
     progress: float | None = None,
     chunks_done: int | None = None,
@@ -167,6 +169,7 @@ def _set_mix_state(
         status=status,
         output_url=output_url,
         detail=detail,
+        error_code=error_code,
         progress=progress,
         chunks_done=chunks_done,
         chunks_total=chunks_total,
@@ -189,12 +192,14 @@ def _update_mix_progress(
     state = _get_mix_state(job_id)
     output_url = state.output_url if state else None
     detail = state.detail if state else None
+    error_code = state.error_code if state else None
     progress = float(chunks_done) / float(chunks_total) if chunks_total > 0 else None
     return _set_mix_state(
         job_id,
         JobStatus.RUNNING,
         output_url=output_url,
         detail=detail,
+        error_code=error_code,
         token=token,
         progress=progress,
         chunks_done=chunks_done,
@@ -239,7 +244,10 @@ async def create_job(
     original_name = file.filename or None
     suffix = Path(original_name or "").suffix.lower()
     if suffix not in _allowed_suffixes:
-        raise HTTPException(status_code=400, detail="unsupported file type")
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "UNSUPPORTED_FILE", "detail": "unsupported file type"},
+        )
     job_dir = _upload_root / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
     input_path = job_dir / f"input{suffix}"
@@ -249,9 +257,13 @@ async def create_job(
     wav_path = job_dir / "input.wav"
     output_path = _output_root / job_id / "output.wav"
     try:
+        logger.info("Job upload received job=%s file=%s", job_id, original_name)
         audio_io.extract_audio(input_path, wav_path, target_sr=DEFAULT_SAMPLE_RATE, mono=True)
+        logger.info("Job audio extracted job=%s", job_id)
         audio, sr = audio_io.read_audio(wav_path, target_sr=DEFAULT_SAMPLE_RATE, mono=True)
+        logger.info("Job audio loaded job=%s samples=%d sr=%d", job_id, audio.shape[0], sr)
         candidates = tasks.build_candidates(audio, sr, top_n=top_n, use_yamnet=use_yamnet)
+        logger.info("Job candidates built job=%s count=%d", job_id, len(candidates))
         duration_seconds = audio.shape[0] / float(sr) if sr else None
         job = Job(
             id=job_id,
@@ -270,16 +282,18 @@ async def create_job(
         _set_job(job)
         return job
     except Exception as exc:
+        code, detail = classify_error(exc)
         job = Job(
             id=job_id,
             status=JobStatus.FAILED,
             created_at=created_at,
             updated_at=datetime.utcnow(),
-            detail=str(exc),
+            detail=detail,
+            error_code=code,
             file_name=original_name,
         )
         _set_job(job)
-        raise HTTPException(status_code=500, detail=job.detail)
+        raise HTTPException(status_code=500, detail={"error_code": code, "detail": detail})
 
 
 @router.get("/{job_id}/mix", response_model=MixResponse)
@@ -330,14 +344,29 @@ def cancel_mix(job_id: str) -> MixResponse:
 def mix_job(job_id: str, payload: MixRequest) -> MixResponse:
     job = _jobs.get(job_id)
     if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+        raise HTTPException(
+            status_code=404,
+            detail={"error_code": "JOB_NOT_FOUND", "detail": "job not found"},
+        )
     file_paths = _job_files.get(job_id)
     if file_paths is None or not file_paths["wav"].exists():
-        raise HTTPException(status_code=404, detail="input audio not found")
+        raise HTTPException(
+            status_code=404,
+            detail={"error_code": "INPUT_NOT_FOUND", "detail": "input audio not found"},
+        )
     if not payload.prompts:
-        raise HTTPException(status_code=400, detail="prompts required")
+        raise HTTPException(
+            status_code=400,
+            detail={"error_code": "PROMPTS_REQUIRED", "detail": "prompts required"},
+        )
     if len(payload.prompts) != len(payload.gains):
-        raise HTTPException(status_code=400, detail="prompts and gains must match length")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": "PROMPT_GAIN_MISMATCH",
+                "detail": "prompts and gains must match length",
+            },
+        )
 
     preview_seconds = None
     preview_start = 0.0
@@ -472,16 +501,30 @@ def mix_job(job_id: str, payload: MixRequest) -> MixResponse:
             if not _should_finalize(job_id, mix_token):
                 return
             elapsed = time.time() - start_time
-            logger.warning("Mix failed job=%s seconds=%.1f error=%s", job_id, elapsed, exc)
+            code, detail = classify_error(exc)
+            logger.warning(
+                "Mix failed job=%s seconds=%.1f error_code=%s error=%s",
+                job_id,
+                elapsed,
+                code,
+                exc,
+            )
             failed = running.copy(
                 update={
                     "status": JobStatus.FAILED,
                     "updated_at": datetime.utcnow(),
-                    "detail": str(exc),
+                    "detail": detail,
+                    "error_code": code,
                 }
             )
             _set_job(failed)
-            _set_mix_state(job_id, JobStatus.FAILED, detail=failed.detail, token=mix_token)
+            _set_mix_state(
+                job_id,
+                JobStatus.FAILED,
+                detail=failed.detail,
+                error_code=code,
+                token=mix_token,
+            )
 
     threading.Thread(target=_run_mix, name=f"mix-{job_id}", daemon=True).start()
     return _get_mix_state(job_id) or MixResponse(job_id=job_id, status=JobStatus.RUNNING)

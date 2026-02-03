@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -13,6 +14,8 @@ from app.core.hash_cache import cache_path, fingerprint_settings, hash_file
 from app.core.mixing import apply_gain, limiter, mix_tracks, peak_normalize
 from app.worker.models.sam_audio import separate_prompt
 from app.worker.models.yamnet import detect_candidates
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class CancelledError(RuntimeError):
@@ -231,16 +234,25 @@ def process_job(
             output_path = Path(output_path)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(cache_target, output_path)
+            logger.info("Mix cache hit output=%s", output_path)
             return output_path
 
+    logger.info("Mix load audio input=%s", input_path)
     audio, sr = read_audio(input_path, target_sr=target_sr, mono=True)
     if preview_seconds and preview_seconds > 0:
         start = float(preview_start or 0.0)
         if start < 0:
             start = 0.0
         end = start + float(preview_seconds)
+        logger.info("Mix preview slice start=%.2fs seconds=%.2fs", start, preview_seconds)
         audio = slice_audio(audio, sr, start, end)
     duration = audio.shape[0] / float(sr) if sr else 0.0
+    logger.info(
+        "Mix separate start prompts=%d mode=%s duration=%.2fs",
+        len(prompts),
+        mode,
+        duration,
+    )
     if chunk_seconds > 0 and duration > chunk_seconds:
         output = run_separation_chunked(
             audio,
@@ -263,6 +275,7 @@ def process_job(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_audio(output_path, output, sr)
+    logger.info("Mix write output=%s", output_path)
     if cache_target is not None:
         cache_target.parent.mkdir(parents=True, exist_ok=True)
         if cache_target.resolve() != output_path.resolve():

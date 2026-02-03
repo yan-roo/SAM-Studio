@@ -159,8 +159,31 @@ async function readError(response: Response) {
     return `Request failed (${response.status})`;
   }
   try {
-    const payload = JSON.parse(rawText) as { detail?: string };
-    return payload.detail ?? rawText;
+    const payload = JSON.parse(rawText) as {
+      detail?: unknown;
+      error_code?: string;
+    };
+    if (payload.detail && typeof payload.detail === "object") {
+      const nested = payload.detail as { detail?: unknown; error_code?: string };
+      const nestedDetail =
+        typeof nested.detail === "string"
+          ? nested.detail
+          : nested.detail !== undefined
+            ? JSON.stringify(nested.detail)
+            : "Request failed";
+      if (nested.error_code) {
+        return `${nestedDetail} (code: ${nested.error_code})`;
+      }
+      return nestedDetail;
+    }
+    const detail =
+      typeof payload.detail === "string" && payload.detail.length > 0
+        ? payload.detail
+        : rawText;
+    if (payload.error_code) {
+      return `${detail} (code: ${payload.error_code})`;
+    }
+    return detail;
   } catch {
     return rawText;
   }

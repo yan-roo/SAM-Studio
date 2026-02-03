@@ -25,6 +25,7 @@ export type Job = {
   created_at: string;
   updated_at?: string | null;
   detail?: string | null;
+  error_code?: string | null;
   candidates?: Candidate[] | null;
   file_name?: string | null;
   duration_seconds?: number | null;
@@ -37,6 +38,7 @@ export type MixResponse = {
   status: "PENDING" | "RUNNING" | "DONE" | "FAILED" | "CANCELLED";
   output_url?: string | null;
   detail?: string | null;
+  error_code?: string | null;
   progress?: number | null;
   chunks_done?: number | null;
   chunks_total?: number | null;

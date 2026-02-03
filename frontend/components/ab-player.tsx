@@ -367,7 +367,9 @@ export function ABPlayer({
           <audio controls preload="auto" src={fullInputUrl} />
         </div>
       ) : null}
-      <p className="panel-meta">{metaCopy}</p>
+      <p className="panel-meta" data-testid="ab-meta">
+        {metaCopy}
+      </p>
     </section>
   );
 }

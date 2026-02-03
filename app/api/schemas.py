@@ -47,6 +47,7 @@ class Job(BaseModel):
     created_at: datetime
     updated_at: datetime | None = None
     detail: str | None = None
+    error_code: str | None = None
     candidates: list[Candidate] | None = None
     file_name: str | None = None
     duration_seconds: float | None = None
@@ -69,6 +70,7 @@ class MixResponse(BaseModel):
     status: JobStatus
     output_url: str | None = None
     detail: str | None = None
+    error_code: str | None = None
     progress: float | None = None
     chunks_done: int | None = None
     chunks_total: int | None = None

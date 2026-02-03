@@ -75,6 +75,7 @@ const setupApiMocks = async (
       cancelled: boolean;
       forceRunning: boolean;
     };
+    mixFailure?: { detail: string; error_code: string };
   },
 ) => {
   await serveAudio(page);
@@ -139,6 +140,15 @@ const setupApiMocks = async (
     if (mixMatch && method === "POST") {
       state.mixState.cancelled = false;
       state.mixState.requestCount += 1;
+      if (state.mixFailure) {
+        const response: MixResponse = {
+          job_id: state.activeJob.id,
+          status: "FAILED",
+          detail: state.mixFailure.detail,
+          error_code: state.mixFailure.error_code,
+        };
+        return fulfillJson(route, response);
+      }
       if (state.mixState.forceRunning) {
         state.mixState.forceRunning = false;
         state.mixState.pending = true;
@@ -464,4 +474,31 @@ test("history search, filter, delete, and cleanup", async ({ page }) => {
   await page.getByTestId("history-clear-outputs").check();
   await page.getByTestId("history-cleanup-run").click();
   await expect(page.getByText(/Removed \d+ job/)).toBeVisible();
+});
+
+test("mix error shows error code hint", async ({ page }) => {
+  const job = makeJob("e2e4-job-a");
+  const state = {
+    jobs: [job],
+    activeJob: job,
+    mixState: {
+      requestCount: 0,
+      pending: false,
+      cancelled: false,
+      forceRunning: false,
+    },
+    mixFailure: {
+      detail: "ffmpeg not found; install it to convert non-wav inputs.",
+      error_code: "FFMPEG_MISSING",
+    },
+  };
+  await setupApiMocks(page, state);
+
+  await page.goto("/");
+  await page.getByTestId("upload-input").setInputFiles(demoPath);
+  await page.getByTestId("render-preview").click();
+
+  await expect(page.getByTestId("ab-status")).toHaveText("Mix failed");
+  await expect(page.getByTestId("ab-meta")).toContainText("FFMPEG_MISSING");
+  await expect(page.getByTestId("ab-meta")).toContainText("Install ffmpeg");
 });

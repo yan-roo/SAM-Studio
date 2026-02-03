@@ -69,6 +69,34 @@ export default function Home() {
   const [previewStartSeconds, setPreviewStartSeconds] = useState(0);
   const [customCandidates, setCustomCandidates] = useState<Candidate[]>([]);
   const [toast, setToast] = useState<string | null>(null);
+
+  const ERROR_HINTS: Record<string, string> = {
+    FFMPEG_MISSING: "Install ffmpeg to convert non-wav inputs.",
+    SOUNDFILE_MISSING: "Install soundfile/libsndfile to read audio.",
+    SAM_AUDIO_MISSING: "Install SAM-Audio dependencies.",
+    TORCH_MISSING: "Install PyTorch to run separation.",
+    DEVICE_OOM: "Try a shorter preview or switch to CPU.",
+    SHAPE_MISMATCH: "Try a shorter preview or restart the server.",
+    HF_TOKEN_MISSING: "Set HF_TOKEN to access the SAM-Audio model.",
+    HF_ACCESS: "Request model access on Hugging Face and set HF_TOKEN.",
+    INPUT_NOT_FOUND: "Re-upload the audio file.",
+    PROMPTS_REQUIRED: "Select at least one candidate.",
+    PROMPT_GAIN_MISMATCH: "Refresh and try again.",
+    UNSUPPORTED_FILE: "Use wav/mp3/m4a/mp4 inputs.",
+  };
+
+  const formatError = (detail?: string | null, code?: string | null) => {
+    const trimmed = detail?.trim();
+    if (!trimmed && !code) {
+      return null;
+    }
+    const base = trimmed && trimmed.length > 0 ? trimmed : "Request failed";
+    if (!code) {
+      return base;
+    }
+    const hint = ERROR_HINTS[code];
+    return hint ? `${base} (code: ${code}) · ${hint}` : `${base} (code: ${code})`;
+  };
   const toastTimerRef = useRef<number | null>(null);
   const mixPollTimerRef = useRef<number | null>(null);
   const mixRequestIdRef = useRef(0);
@@ -197,7 +225,7 @@ export default function Home() {
     resetMixState();
     setJob(selected);
     setFileName(`Job ${selected.id.slice(0, 8)}`);
-    setError(selected.detail ?? null);
+    setError(formatError(selected.detail, selected.error_code));
     setStatus(
       selected.status === "DONE"
         ? "done"
@@ -546,12 +574,12 @@ export default function Home() {
       }
       if (result.status === "CANCELLED") {
         setMixStatus("cancelled");
-        setMixError(result.detail ?? "Mix cancelled");
+        setMixError(formatError(result.detail ?? "Mix cancelled", result.error_code));
         return;
       }
       if (result.status === "FAILED") {
         setMixStatus("error");
-        setMixError(result.detail ?? "Mix failed");
+        setMixError(formatError(result.detail ?? "Mix failed", result.error_code));
         return;
       }
     } catch (err) {
@@ -627,10 +655,10 @@ export default function Home() {
         }
       } else if (result.status === "CANCELLED") {
         setMixStatus("cancelled");
-        setMixError(result.detail ?? "Mix cancelled");
+        setMixError(formatError(result.detail ?? "Mix cancelled", result.error_code));
       } else if (result.status === "FAILED") {
         setMixStatus("error");
-        setMixError(result.detail ?? "Mix failed");
+        setMixError(formatError(result.detail ?? "Mix failed", result.error_code));
       } else {
         setMixProgress((prev) => result.progress ?? prev);
         setMixChunksDone((prev) => result.chunks_done ?? prev);
@@ -653,7 +681,7 @@ export default function Home() {
       const result = await cancelMix(job.id);
       if (result.status === "CANCELLED") {
         setMixStatus("cancelled");
-        setMixError(result.detail ?? "Mix cancelled");
+        setMixError(formatError(result.detail ?? "Mix cancelled", result.error_code));
         showToast("Mix cancelled");
       } else if (result.status === "DONE" && result.output_url) {
         setOutputUrl(appendCacheBust(resolveApiUrl(result.output_url), String(Date.now())));
@@ -661,7 +689,7 @@ export default function Home() {
         setMixStatus("ready");
       } else if (result.status === "FAILED") {
         setMixStatus("error");
-        setMixError(result.detail ?? "Mix failed");
+        setMixError(formatError(result.detail ?? "Mix failed", result.error_code));
       } else if (result.status === "RUNNING") {
         setMixStatus("rendering");
         mixRequestIdRef.current += 1;
