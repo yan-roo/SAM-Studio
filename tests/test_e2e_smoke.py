@@ -25,8 +25,9 @@ def test_e2e_smoke_pipeline(monkeypatch: pytest.MonkeyPatch):
         audio_io.write_audio(input_path, audio, sr)
 
         def _fake_separate_prompt(
-            audio_chunk: np.ndarray, _sr: int, _prompt: str
+            audio_chunk: np.ndarray, _sr: int, _prompt: str, job_id: str | None = None
         ) -> tuple[np.ndarray, np.ndarray]:
+            _ = job_id
             return audio_chunk, np.zeros_like(audio_chunk)
 
         monkeypatch.setattr(tasks, "separate_prompt", _fake_separate_prompt)

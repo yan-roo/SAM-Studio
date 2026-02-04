@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -118,11 +119,12 @@ def run_separation(
     prompts: list[str],
     gains: list[float],
     mode: str = "keep",
+    job_id: str | None = None,
 ) -> np.ndarray:
     residual = audio
     kept_tracks: list[np.ndarray] = []
     for prompt, gain in zip(prompts, gains):
-        target, residual = separate_prompt(residual, sr, prompt)
+        target, residual = separate_prompt(residual, sr, prompt, job_id=job_id)
         kept_tracks.append(apply_gain(target, gain))
     kept_mix = mix_tracks(kept_tracks)
     if mode == "keep":
@@ -148,11 +150,12 @@ def run_separation_chunked(
     settings_hash: str | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    job_id: str | None = None,
 ) -> np.ndarray:
     total_len = audio.shape[0]
     chunk_samples = int(round(chunk_seconds * sr))
     if chunk_samples <= 0 or total_len <= chunk_samples:
-        return run_separation(audio, sr, prompts, gains, mode=mode)
+        return run_separation(audio, sr, prompts, gains, mode=mode, job_id=job_id)
     overlap_samples = int(round(overlap_seconds * sr))
     overlap_samples = max(0, min(overlap_samples, chunk_samples // 2))
     ranges = _build_chunk_ranges(total_len, chunk_samples, overlap_samples)
@@ -175,7 +178,8 @@ def run_separation_chunked(
             chunk_out = _load_cached_chunk(chunk_path, chunk_len, sr)
         if chunk_out is None:
             chunk_out = run_separation(
-                chunk_audio, sr, prompts, gains, mode=mode)
+                chunk_audio, sr, prompts, gains, mode=mode, job_id=job_id
+            )
             if chunk_path is not None:
                 write_audio(chunk_path, chunk_out, sr)
         window = np.ones(end - start, dtype=np.float32)
@@ -209,6 +213,7 @@ def process_job(
     cache_dir: str | Path | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    job_id: str | None = None,
 ) -> Path:
     if should_cancel and should_cancel():
         raise CancelledError("cancelled")
@@ -237,18 +242,34 @@ def process_job(
             logger.info("Mix cache hit output=%s", output_path)
             return output_path
 
-    logger.info("Mix load audio input=%s", input_path)
+    job_tag = f" job={job_id}" if job_id else ""
+    load_start = time.time()
+    logger.info("Mix load audio%s input=%s", job_tag, input_path)
     audio, sr = read_audio(input_path, target_sr=target_sr, mono=True)
+    logger.info(
+        "Mix load audio done%s seconds=%.2f samples=%d sr=%d",
+        job_tag,
+        time.time() - load_start,
+        audio.shape[0],
+        sr,
+    )
     if preview_seconds and preview_seconds > 0:
         start = float(preview_start or 0.0)
         if start < 0:
             start = 0.0
         end = start + float(preview_seconds)
-        logger.info("Mix preview slice start=%.2fs seconds=%.2fs", start, preview_seconds)
+        logger.info(
+            "Mix preview slice%s start=%.2fs seconds=%.2fs",
+            job_tag,
+            start,
+            preview_seconds,
+        )
         audio = slice_audio(audio, sr, start, end)
     duration = audio.shape[0] / float(sr) if sr else 0.0
+    sep_start = time.time()
     logger.info(
-        "Mix separate start prompts=%d mode=%s duration=%.2fs",
+        "Mix separate start%s prompts=%d mode=%s duration=%.2fs",
+        job_tag,
         len(prompts),
         mode,
         duration,
@@ -267,15 +288,23 @@ def process_job(
             settings_hash=settings_hash,
             progress_callback=progress_callback,
             should_cancel=should_cancel,
+            job_id=job_id,
         )
     else:
-        output = run_separation(audio, sr, prompts, gains, mode=mode)
+        output = run_separation(audio, sr, prompts, gains, mode=mode, job_id=job_id)
         if progress_callback:
             progress_callback(1, 1)
+    logger.info("Mix separate done%s seconds=%.2f", job_tag, time.time() - sep_start)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_start = time.time()
     write_audio(output_path, output, sr)
-    logger.info("Mix write output=%s", output_path)
+    logger.info(
+        "Mix write output%s seconds=%.2f output=%s",
+        job_tag,
+        time.time() - write_start,
+        output_path,
+    )
     if cache_target is not None:
         cache_target.parent.mkdir(parents=True, exist_ok=True)
         if cache_target.resolve() != output_path.resolve():

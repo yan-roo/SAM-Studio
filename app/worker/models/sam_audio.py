@@ -262,10 +262,17 @@ def _clear_device_cache(torch, device: str) -> None:
         _clear_cuda_cache(torch)
 
 
-def _log_separation_done(device: str, fallback_from: str) -> None:
+def _log_separation_done(
+    device: str,
+    fallback_from: str,
+    seconds: float,
+    job_id: str | None,
+) -> None:
     logger.info(
-        "SAM-Audio separation done (device=%s, fallback_from=%s)",
+        "SAM-Audio separation done job=%s device=%s seconds=%.2f fallback_from=%s",
+        job_id or "-",
         device,
+        seconds,
         fallback_from,
     )
 
@@ -321,7 +328,12 @@ def _run_sam_audio_inference(
     return target_np, residual_np
 
 
-def _separate_sam_audio(audio: np.ndarray, sr: int, prompt: str) -> tuple[np.ndarray, np.ndarray]:
+def _separate_sam_audio(
+    audio: np.ndarray,
+    sr: int,
+    prompt: str,
+    job_id: str | None,
+) -> tuple[np.ndarray, np.ndarray]:
     model_id = _env_str("MODEL_SAM_AUDIO_ID", "facebook/sam-audio-small")
     model, processor, device = _load_sam_audio_model(model_id)
     if model is None or processor is None or device is None:
@@ -334,6 +346,13 @@ def _separate_sam_audio(audio: np.ndarray, sr: int, prompt: str) -> tuple[np.nda
         raise RuntimeError("PyTorch is required for SAM-Audio separation.")
     fallback_used = False
     initial_device = device
+    start_time = time.time()
+    logger.info(
+        "SAM-Audio separate start job=%s device=%s prompt=%s",
+        job_id or "-",
+        device,
+        prompt,
+    )
     try:
         result = _run_sam_audio_inference(audio, sr, prompt, model, processor, device, torch)
     except RuntimeError as exc:
@@ -345,9 +364,10 @@ def _separate_sam_audio(audio: np.ndarray, sr: int, prompt: str) -> tuple[np.nda
             else:
                 reason = "runtime error"
             logger.warning(
-                "SAM-Audio %s %s. Falling back to CPU for this run. error=%s",
+                "SAM-Audio %s %s job=%s. Falling back to CPU for this run. error=%s",
                 device,
                 reason,
+                job_id or "-",
                 exc,
             )
             _clear_device_cache(torch, device)
@@ -358,14 +378,21 @@ def _separate_sam_audio(audio: np.ndarray, sr: int, prompt: str) -> tuple[np.nda
             fallback_used = True
         else:
             raise
-    _log_separation_done(device, initial_device if fallback_used else "none")
+    _log_separation_done(
+        device,
+        initial_device if fallback_used else "none",
+        time.time() - start_time,
+        job_id,
+    )
     return result
 
 
-def separate_prompt(audio: np.ndarray, sr: int, prompt: str) -> tuple[np.ndarray, np.ndarray]:
+def separate_prompt(
+    audio: np.ndarray, sr: int, prompt: str, job_id: str | None = None
+) -> tuple[np.ndarray, np.ndarray]:
     if audio.size == 0:
         return audio, audio
     if not prompt.strip():
         return np.zeros_like(audio), audio
 
-    return _separate_sam_audio(audio, sr, prompt)
+    return _separate_sam_audio(audio, sr, prompt, job_id)

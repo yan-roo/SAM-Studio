@@ -445,6 +445,7 @@ def mix_job(job_id: str, payload: MixRequest) -> MixResponse:
                 cache_dir=_cache_root,
                 progress_callback=_progress,
                 should_cancel=_should_cancel,
+                job_id=job_id,
             )
             if not _should_finalize(job_id, mix_token):
                 return

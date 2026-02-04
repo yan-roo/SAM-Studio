@@ -29,8 +29,10 @@ def test_preview_negative_start_clamps_to_zero(monkeypatch: pytest.MonkeyPatch) 
             _prompts: list[str],
             _gains: list[float],
             mode: str = "keep",
+            job_id: str | None = None,
         ) -> np.ndarray:
             _ = mode
+            _ = job_id
             return audio_chunk
 
         monkeypatch.setattr(tasks, "run_separation", _fake_run_separation)
